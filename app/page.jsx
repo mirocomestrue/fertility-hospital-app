@@ -13,8 +13,6 @@ import {
   Phone,
   Pencil,
   Trash2,
-  List,
-  Map as MapIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -110,7 +108,6 @@ export default function FertilityHospitalApp() {
   const [hospitals, setHospitals] = useState([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("전체");
-  const [viewMode, setViewMode] = useState("list");
   const [form, setForm] = useState({
     name: "",
     region: "서울",
@@ -496,94 +493,67 @@ export default function FertilityHospitalApp() {
         </Dialog>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        <div className="grid grid-cols-4 gap-2 md:gap-4">
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-4 md:p-5">
-              <p className="text-xs md:text-sm text-slate-500">전체 병원</p>
-              <p className="mt-1 text-2xl md:text-3xl font-bold">{stats.total}</p>
+            <CardContent className="p-3 md:p-5">
+              <p className="text-[10px] md:text-sm text-slate-500">전체</p>
+              <p className="mt-0.5 text-lg md:text-3xl font-bold">{stats.total}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-4 md:p-5">
-              <p className="text-xs md:text-sm text-slate-500">진료 가능</p>
-              <p className="mt-1 text-2xl md:text-3xl font-bold text-emerald-600">{stats.available}</p>
+            <CardContent className="p-3 md:p-5">
+              <p className="text-[10px] md:text-sm text-slate-500">진료 가능</p>
+              <p className="mt-0.5 text-lg md:text-3xl font-bold text-emerald-600">{stats.available}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-4 md:p-5">
-              <p className="text-xs md:text-sm text-slate-500">진료 불가</p>
-              <p className="mt-1 text-2xl md:text-3xl font-bold text-red-600">{stats.unavailable}</p>
+            <CardContent className="p-3 md:p-5">
+              <p className="text-[10px] md:text-sm text-slate-500">진료 불가</p>
+              <p className="mt-0.5 text-lg md:text-3xl font-bold text-red-600">{stats.unavailable}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-4 md:p-5">
-              <p className="text-xs md:text-sm text-slate-500">미확인</p>
-              <p className="mt-1 text-2xl md:text-3xl font-bold text-slate-600">{stats.unknown}</p>
+            <CardContent className="p-3 md:p-5">
+              <p className="text-[10px] md:text-sm text-slate-500">미확인</p>
+              <p className="mt-0.5 text-lg md:text-3xl font-bold text-slate-600">{stats.unknown}</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Search + Filter + View Toggle */}
+        {/* Search + Filter */}
         <Card className="rounded-2xl border-0 shadow-sm">
           <CardContent className="p-3 md:p-5">
-            <div className="flex flex-col gap-3">
-              <div className="grid gap-3 md:grid-cols-[1.6fr,1fr]">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                  <Input
-                    className="pl-10"
-                    placeholder="병원명, 지역, 주소, 종별 검색"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                </div>
-
-                <Tabs value={statusFilter} onValueChange={setStatusFilter}>
-                  <TabsList className="grid w-full grid-cols-4">
-                    <TabsTrigger value="전체">전체</TabsTrigger>
-                    <TabsTrigger value="진료 가능">가능</TabsTrigger>
-                    <TabsTrigger value="진료 불가">불가</TabsTrigger>
-                    <TabsTrigger value="미확인">미확인</TabsTrigger>
-                  </TabsList>
-                </Tabs>
+            <div className="grid gap-3 md:grid-cols-[1.6fr,1fr]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Input
+                  className="pl-10"
+                  placeholder="병원명, 지역, 주소, 종별 검색"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
               </div>
 
-              {/* View Toggle */}
-              <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
-                <button
-                  onClick={() => setViewMode("list")}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    viewMode === "list"
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  <List className="h-4 w-4" />
-                  목록
-                </button>
-                <button
-                  onClick={() => setViewMode("map")}
-                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    viewMode === "map"
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-500 hover:text-slate-700"
-                  }`}
-                >
-                  <MapIcon className="h-4 w-4" />
-                  지도
-                </button>
-              </div>
+              <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="전체">전체</TabsTrigger>
+                  <TabsTrigger value="진료 가능">가능</TabsTrigger>
+                  <TabsTrigger value="진료 불가">불가</TabsTrigger>
+                  <TabsTrigger value="미확인">미확인</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
           </CardContent>
         </Card>
 
-        {/* Content */}
+        {/* Map */}
+        <HospitalMap hospitals={filtered} userLocation={userLocation} />
+
+        {/* Hospital List */}
         {loading ? (
           <Card className="rounded-2xl border-0 shadow-sm">
             <CardContent className="py-16 text-center text-slate-500">불러오는 중...</CardContent>
           </Card>
-        ) : viewMode === "map" ? (
-          <HospitalMap hospitals={filtered} userLocation={userLocation} />
         ) : (
           <div className="grid gap-3 md:gap-4">
             {filtered.map((hospital) => {

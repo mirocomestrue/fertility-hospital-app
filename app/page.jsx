@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 import {
   Search,
@@ -12,6 +13,8 @@ import {
   Phone,
   Pencil,
   Trash2,
+  List,
+  Map as MapIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,31 +24,29 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useGeolocation } from "@/hooks/useGeolocation";
+
+const HospitalMap = dynamic(() => import("@/components/map/HospitalMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[60vh] md:h-[500px] items-center justify-center rounded-2xl bg-slate-100">
+      <p className="text-slate-500">지도를 불러오는 중...</p>
+    </div>
+  ),
+});
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const supabase =
   supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 
 const regionOptions = [
-  "서울",
-  "경기",
-  "강원",
-  "인천",
-  "부산",
-  "대구",
-  "광주",
-  "대전",
-  "울산",
-  "세종",
-  "충북",
-  "충남",
-  "전북",
-  "전남",
-  "경북",
-  "경남",
-  "제주",
+  "서울", "경기", "강원", "인천", "부산", "대구", "광주", "대전",
+  "울산", "세종", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
 ];
+
+const hospitalTypeOptions = ["상급종합병원", "종합병원", "병원", "의원"];
+const designationTypeOptions = ["인공/체외 동시 지정기관", "인공수정 지정기관"];
 
 const EDIT_PASSWORD = "203040";
 
@@ -86,8 +87,14 @@ function normalizeHospital(row) {
   return {
     id: row.id,
     name: row.name ?? "",
-    address: row.region ?? "서울",
+    region: row.region ?? "서울",
+    district: row.district ?? "",
+    address: row.address ?? "",
     phone: row.phone ?? "",
+    hospital_type: row.hospital_type ?? "",
+    designation_type: row.designation_type ?? "",
+    latitude: row.latitude ?? null,
+    longitude: row.longitude ?? null,
     status: computeStatus(upvotes, downvotes),
     upvotes,
     downvotes,
@@ -99,15 +106,19 @@ function StatusDot({ status }) {
   return <span className={`inline-block h-3 w-3 rounded-full ${statusMeta[status].dot}`} />;
 }
 
-export default function SeoulFertilityHospitalVoteSearch() {
+export default function FertilityHospitalApp() {
   const [hospitals, setHospitals] = useState([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("전체");
+  const [viewMode, setViewMode] = useState("list");
   const [form, setForm] = useState({
     name: "",
-    address: "서울",
+    region: "서울",
+    address: "",
     phone: "",
     memo: "",
+    hospital_type: "",
+    designation_type: "",
   });
   const [editingId, setEditingId] = useState(null);
   const [voterSelections, setVoterSelections] = useState({});
@@ -118,9 +129,11 @@ export default function SeoulFertilityHospitalVoteSearch() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const userLocation = useGeolocation();
+
   const filtered = useMemo(() => {
     return hospitals.filter((h) => {
-      const text = `${h.name} ${h.address}`.toLowerCase();
+      const text = `${h.name} ${h.address} ${h.district} ${h.region} ${h.hospital_type} ${h.designation_type}`.toLowerCase();
       const matchesQuery = text.includes(query.toLowerCase());
       const matchesStatus =
         statusFilter === "전체" ||
@@ -153,8 +166,8 @@ export default function SeoulFertilityHospitalVoteSearch() {
 
     const { data, error } = await supabase
       .from("hospitals")
-      .select("id, name, region, phone, note, upvotes, downvotes")
-      .order("id", { ascending: false });
+      .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
+      .order("id", { ascending: true });
 
     if (error) {
       setError("병원 목록을 불러오지 못했습니다.");
@@ -171,7 +184,7 @@ export default function SeoulFertilityHospitalVoteSearch() {
   }, []);
 
   const resetForm = () => {
-    setForm({ name: "", address: "서울", phone: "", memo: "" });
+    setForm({ name: "", region: "서울", address: "", phone: "", memo: "", hospital_type: "", designation_type: "" });
     setEditingId(null);
   };
 
@@ -217,12 +230,7 @@ export default function SeoulFertilityHospitalVoteSearch() {
     setHospitals((prev) =>
       prev.map((hospital) =>
         hospital.id === id
-          ? {
-              ...hospital,
-              upvotes,
-              downvotes,
-              status: computeStatus(upvotes, downvotes),
-            }
+          ? { ...hospital, upvotes, downvotes, status: computeStatus(upvotes, downvotes) }
           : hospital
       )
     );
@@ -238,9 +246,12 @@ export default function SeoulFertilityHospitalVoteSearch() {
 
     const payload = {
       name: form.name.trim(),
-      region: form.address.trim(),
+      region: form.region.trim(),
+      address: form.address.trim(),
       phone: form.phone.trim(),
       note: form.memo.trim(),
+      hospital_type: form.hospital_type || null,
+      designation_type: form.designation_type || null,
       upvotes: 0,
       downvotes: 0,
     };
@@ -248,7 +259,7 @@ export default function SeoulFertilityHospitalVoteSearch() {
     const { data, error } = await supabase
       .from("hospitals")
       .insert(payload)
-      .select("id, name, region, phone, note, upvotes, downvotes")
+      .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
       .single();
 
     if (error) {
@@ -266,16 +277,19 @@ export default function SeoulFertilityHospitalVoteSearch() {
 
     const payload = {
       name: form.name.trim(),
-      region: form.address.trim(),
+      region: form.region.trim(),
+      address: form.address.trim(),
       phone: form.phone.trim(),
       note: form.memo.trim(),
+      hospital_type: form.hospital_type || null,
+      designation_type: form.designation_type || null,
     };
 
     const { data, error } = await supabase
       .from("hospitals")
       .update(payload)
       .eq("id", editingId)
-      .select("id, name, region, phone, note, upvotes, downvotes")
+      .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
       .single();
 
     if (error) {
@@ -294,9 +308,12 @@ export default function SeoulFertilityHospitalVoteSearch() {
     setEditingId(hospital.id);
     setForm({
       name: hospital.name || "",
-      address: hospital.address || "서울",
+      region: hospital.region || "서울",
+      address: hospital.address || "",
       phone: hospital.phone || "",
       memo: hospital.notes?.[0] || "",
+      hospital_type: hospital.hospital_type || "",
+      designation_type: hospital.designation_type || "",
     });
     setFormOpen(true);
   };
@@ -352,14 +369,14 @@ export default function SeoulFertilityHospitalVoteSearch() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 md:p-10">
-      <div className="mx-auto max-w-6xl space-y-6">
+    <div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-10">
+      <div className="mx-auto max-w-6xl space-y-4 md:space-y-6">
+        {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight">서울 난임병원 검색 · 환자 제보형 진료 상태판</h1>
-            <p className="max-w-3xl text-sm leading-6 text-slate-600">
-              실제 방문한 환자가 직접 “진료 가능 / 진료 불가”를 남기는 구조입니다.
-              기본 상태는 모두 <span className="font-semibold text-slate-700">미확인</span>입니다.
+          <div className="space-y-1.5">
+            <h1 className="text-xl md:text-3xl font-bold tracking-tight">난임 지정 병원 찾기</h1>
+            <p className="max-w-3xl text-xs md:text-sm leading-5 md:leading-6 text-slate-600">
+              전국 난임시술 의료기관 지정 현황 (2025.12.31 기준) · 환자가 직접 "진료 가능 / 불가"를 제보합니다.
             </p>
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
@@ -367,10 +384,10 @@ export default function SeoulFertilityHospitalVoteSearch() {
           <Dialog open={formOpen} onOpenChange={setFormOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 rounded-2xl" onClick={openNewHospitalForm}>
-                <PlusCircle className="h-4 w-4" /> {editingId ? "병원 수정" : "병원 직접 등록"}
+                <PlusCircle className="h-4 w-4" /> 병원 직접 등록
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-xl">
+            <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>{editingId ? "병원 수정" : "병원 등록"}</DialogTitle>
               </DialogHeader>
@@ -379,19 +396,53 @@ export default function SeoulFertilityHospitalVoteSearch() {
                   <Label>병원명 *</Label>
                   <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>지역</Label>
+                    <select
+                      value={form.region}
+                      onChange={(e) => setForm({ ...form, region: e.target.value })}
+                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                    >
+                      {regionOptions.map((region) => (
+                        <option key={region} value={region}>{region}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>종별</Label>
+                    <select
+                      value={form.hospital_type}
+                      onChange={(e) => setForm({ ...form, hospital_type: e.target.value })}
+                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                    >
+                      <option value="">선택</option>
+                      {hospitalTypeOptions.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
                 <div className="space-y-2">
-                  <Label>지역</Label>
+                  <Label>지정 유형</Label>
                   <select
-                    value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
+                    value={form.designation_type}
+                    onChange={(e) => setForm({ ...form, designation_type: e.target.value })}
                     className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
                   >
-                    {regionOptions.map((region) => (
-                      <option key={region} value={region}>
-                        {region}
-                      </option>
+                    <option value="">선택</option>
+                    {designationTypeOptions.map((t) => (
+                      <option key={t} value={t}>{t}</option>
                     ))}
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>주소</Label>
+                  <Input
+                    value={form.address}
+                    onChange={(e) => setForm({ ...form, address: e.target.value })}
+                    placeholder="예: 서울특별시 강남구 ..."
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>전화번호</Label>
@@ -408,10 +459,7 @@ export default function SeoulFertilityHospitalVoteSearch() {
                   {editingId && (
                     <Button
                       variant="outline"
-                      onClick={() => {
-                        resetForm();
-                        setFormOpen(false);
-                      }}
+                      onClick={() => { resetForm(); setFormOpen(false); }}
                       className="rounded-2xl"
                     >
                       취소
@@ -423,6 +471,7 @@ export default function SeoulFertilityHospitalVoteSearch() {
           </Dialog>
         </div>
 
+        {/* Password Dialog */}
         <Dialog open={passwordOpen} onOpenChange={closePasswordDialog}>
           <DialogContent className="sm:max-w-sm">
             <DialogHeader>
@@ -435,81 +484,108 @@ export default function SeoulFertilityHospitalVoteSearch() {
                   type="password"
                   value={passwordValue}
                   onChange={(e) => setPasswordValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handlePasswordSubmit();
-                  }}
+                  onKeyDown={(e) => { if (e.key === "Enter") handlePasswordSubmit(); }}
                 />
               </div>
               <div className="flex gap-2">
-                <Button onClick={handlePasswordSubmit} className="flex-1 rounded-2xl">
-                  확인
-                </Button>
-                <Button variant="outline" onClick={() => closePasswordDialog(false)} className="rounded-2xl">
-                  취소
-                </Button>
+                <Button onClick={handlePasswordSubmit} className="flex-1 rounded-2xl">확인</Button>
+                <Button variant="outline" onClick={() => closePasswordDialog(false)} className="rounded-2xl">취소</Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
 
-        <div className="grid gap-4 md:grid-cols-4">
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-5">
-              <p className="text-sm text-slate-500">전체 병원</p>
-              <p className="mt-2 text-3xl font-bold">{stats.total}</p>
+            <CardContent className="p-4 md:p-5">
+              <p className="text-xs md:text-sm text-slate-500">전체 병원</p>
+              <p className="mt-1 text-2xl md:text-3xl font-bold">{stats.total}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-5">
-              <p className="text-sm text-slate-500">진료 가능</p>
-              <p className="mt-2 text-3xl font-bold text-emerald-600">{stats.available}</p>
+            <CardContent className="p-4 md:p-5">
+              <p className="text-xs md:text-sm text-slate-500">진료 가능</p>
+              <p className="mt-1 text-2xl md:text-3xl font-bold text-emerald-600">{stats.available}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-5">
-              <p className="text-sm text-slate-500">진료 불가</p>
-              <p className="mt-2 text-3xl font-bold text-red-600">{stats.unavailable}</p>
+            <CardContent className="p-4 md:p-5">
+              <p className="text-xs md:text-sm text-slate-500">진료 불가</p>
+              <p className="mt-1 text-2xl md:text-3xl font-bold text-red-600">{stats.unavailable}</p>
             </CardContent>
           </Card>
           <Card className="rounded-2xl border-0 shadow-sm">
-            <CardContent className="p-5">
-              <p className="text-sm text-slate-500">미확인</p>
-              <p className="mt-2 text-3xl font-bold text-slate-600">{stats.unknown}</p>
+            <CardContent className="p-4 md:p-5">
+              <p className="text-xs md:text-sm text-slate-500">미확인</p>
+              <p className="mt-1 text-2xl md:text-3xl font-bold text-slate-600">{stats.unknown}</p>
             </CardContent>
           </Card>
         </div>
 
+        {/* Search + Filter + View Toggle */}
         <Card className="rounded-2xl border-0 shadow-sm">
-          <CardContent className="p-4 md:p-5">
-            <div className="grid gap-3 md:grid-cols-[1.6fr,1fr]">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <Input
-                  className="pl-10"
-                  placeholder="병원명 또는 지역 검색"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
+          <CardContent className="p-3 md:p-5">
+            <div className="flex flex-col gap-3">
+              <div className="grid gap-3 md:grid-cols-[1.6fr,1fr]">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    className="pl-10"
+                    placeholder="병원명, 지역, 주소, 종별 검색"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </div>
+
+                <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+                  <TabsList className="grid w-full grid-cols-4">
+                    <TabsTrigger value="전체">전체</TabsTrigger>
+                    <TabsTrigger value="진료 가능">가능</TabsTrigger>
+                    <TabsTrigger value="진료 불가">불가</TabsTrigger>
+                    <TabsTrigger value="미확인">미확인</TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </div>
 
-              <Tabs value={statusFilter} onValueChange={setStatusFilter}>
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="전체">전체</TabsTrigger>
-                  <TabsTrigger value="진료 가능">가능</TabsTrigger>
-                  <TabsTrigger value="진료 불가">불가</TabsTrigger>
-                  <TabsTrigger value="미확인">미확인</TabsTrigger>
-                </TabsList>
-              </Tabs>
+              {/* View Toggle */}
+              <div className="flex gap-1 rounded-xl bg-slate-100 p-1">
+                <button
+                  onClick={() => setViewMode("list")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    viewMode === "list"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <List className="h-4 w-4" />
+                  목록
+                </button>
+                <button
+                  onClick={() => setViewMode("map")}
+                  className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    viewMode === "map"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <MapIcon className="h-4 w-4" />
+                  지도
+                </button>
+              </div>
             </div>
           </CardContent>
         </Card>
 
+        {/* Content */}
         {loading ? (
           <Card className="rounded-2xl border-0 shadow-sm">
             <CardContent className="py-16 text-center text-slate-500">불러오는 중...</CardContent>
           </Card>
+        ) : viewMode === "map" ? (
+          <HospitalMap hospitals={filtered} userLocation={userLocation} />
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-3 md:gap-4">
             {filtered.map((hospital) => {
               const meta = statusMeta[hospital.status];
               const StatusIcon = meta.icon;
@@ -517,82 +593,110 @@ export default function SeoulFertilityHospitalVoteSearch() {
 
               return (
                 <Card key={hospital.id} className="rounded-2xl border-0 shadow-sm">
-                  <CardHeader className="pb-3">
+                  <CardHeader className="px-4 pb-2 pt-4 md:px-6 md:pb-3 md:pt-6">
                     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-3">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <StatusDot status={hospital.status} />
-                          <CardTitle className="text-xl">{hospital.name}</CardTitle>
+                          <CardTitle className="text-base md:text-xl">{hospital.name}</CardTitle>
                           <Badge variant="outline" className={meta.badge}>{meta.label}</Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {hospital.hospital_type && (
+                            <Badge variant="outline" className="text-[10px] md:text-xs px-1.5 py-0 text-slate-500 border-slate-200">
+                              {hospital.hospital_type}
+                            </Badge>
+                          )}
+                          {hospital.designation_type && (
+                            <Badge variant="outline" className="text-[10px] md:text-xs px-1.5 py-0 text-slate-500 border-slate-200">
+                              {hospital.designation_type}
+                            </Badge>
+                          )}
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1.5 md:gap-2">
                         <Button
+                          size="sm"
                           variant={currentVote === "available" ? "default" : "outline"}
-                          className="gap-2 rounded-2xl"
+                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
                           onClick={() => handleVote(hospital.id, "available")}
                         >
-                          <CheckCircle2 className="h-4 w-4" /> {currentVote === "available" ? "가능 취소" : "가능"}
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">{currentVote === "available" ? "가능 취소" : "가능"}</span>
+                          <span className="md:hidden">{currentVote === "available" ? "취소" : "가능"}</span>
                         </Button>
                         <Button
+                          size="sm"
                           variant={currentVote === "unavailable" ? "default" : "outline"}
-                          className="gap-2 rounded-2xl"
+                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
                           onClick={() => handleVote(hospital.id, "unavailable")}
                         >
-                          <XCircle className="h-4 w-4" /> {currentVote === "unavailable" ? "불가 취소" : "불가"}
+                          <XCircle className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">{currentVote === "unavailable" ? "불가 취소" : "불가"}</span>
+                          <span className="md:hidden">{currentVote === "unavailable" ? "취소" : "불가"}</span>
                         </Button>
                         <Button
+                          size="sm"
                           variant="outline"
-                          className="gap-2 rounded-2xl"
+                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
                           onClick={() => requestProtectedAction({ type: "edit", hospital })}
                         >
-                          <Pencil className="h-4 w-4" /> 수정
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">수정</span>
                         </Button>
                         <Button
+                          size="sm"
                           variant="outline"
-                          className="gap-2 rounded-2xl text-red-600"
+                          className="gap-1.5 rounded-2xl text-xs md:text-sm text-red-600"
                           onClick={() => requestProtectedAction({ type: "delete", id: hospital.id })}
                         >
-                          <Trash2 className="h-4 w-4" /> 삭제
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">삭제</span>
                         </Button>
                       </div>
                     </div>
                   </CardHeader>
 
-                  <CardContent className="space-y-4">
-                    <div className="grid gap-3 text-sm text-slate-600 md:grid-cols-2">
+                  <CardContent className="space-y-3 px-4 pb-4 md:px-6 md:pb-6">
+                    <div className="grid gap-2 text-xs md:text-sm text-slate-600 md:grid-cols-2">
                       <div className="flex items-start gap-2">
-                        <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{hospital.address || "주소 정보 없음"}</span>
+                        <MapPin className="mt-0.5 h-3.5 w-3.5 md:h-4 md:w-4 shrink-0" />
+                        <span className="line-clamp-2">{hospital.address || hospital.region || "주소 정보 없음"}</span>
                       </div>
                       <div className="flex items-start gap-2">
-                        <Phone className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{hospital.phone || "연락처 정보 없음"}</span>
+                        <Phone className="mt-0.5 h-3.5 w-3.5 md:h-4 md:w-4 shrink-0" />
+                        {hospital.phone ? (
+                          <a href={`tel:${hospital.phone}`} className="text-blue-600 hover:underline">
+                            {hospital.phone}
+                          </a>
+                        ) : (
+                          <span>연락처 정보 없음</span>
+                        )}
                       </div>
                     </div>
 
-                    <div className="grid gap-3 rounded-2xl bg-slate-50 p-4 md:grid-cols-3">
+                    <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50 p-3 md:p-4">
                       <div>
-                        <p className="text-xs text-slate-500">현재 표시 상태</p>
-                        <div className={`mt-1 flex items-center gap-2 font-semibold ${meta.text}`}>
-                          <StatusIcon className="h-4 w-4" /> {meta.label}
+                        <p className="text-[10px] md:text-xs text-slate-500">현재 상태</p>
+                        <div className={`mt-0.5 flex items-center gap-1.5 text-sm font-semibold ${meta.text}`}>
+                          <StatusIcon className="h-3.5 w-3.5" /> {meta.label}
                         </div>
                       </div>
                       <div>
-                        <p className="text-xs text-slate-500">가능 제보</p>
-                        <p className="mt-1 text-lg font-semibold text-emerald-600">{hospital.upvotes}</p>
+                        <p className="text-[10px] md:text-xs text-slate-500">가능 제보</p>
+                        <p className="mt-0.5 text-base md:text-lg font-semibold text-emerald-600">{hospital.upvotes}</p>
                       </div>
                       <div>
-                        <p className="text-xs text-slate-500">불가 제보</p>
-                        <p className="mt-1 text-lg font-semibold text-red-600">{hospital.downvotes}</p>
+                        <p className="text-[10px] md:text-xs text-slate-500">불가 제보</p>
+                        <p className="mt-0.5 text-base md:text-lg font-semibold text-red-600">{hospital.downvotes}</p>
                       </div>
                     </div>
 
-                    {hospital.notes?.length > 0 && (
-                      <div className="rounded-2xl border border-slate-200 p-4">
-                        <p className="mb-2 text-sm font-semibold">메모</p>
-                        <ul className="space-y-2 text-sm text-slate-600">
+                    {hospital.notes?.length > 0 && hospital.notes[0] && (
+                      <div className="rounded-2xl border border-slate-200 p-3 md:p-4">
+                        <p className="mb-1.5 text-xs md:text-sm font-semibold">메모</p>
+                        <ul className="space-y-1.5 text-xs md:text-sm text-slate-600">
                           {hospital.notes.map((note, idx) => (
                             <li key={idx}>• {note}</li>
                           ))}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -13,6 +13,7 @@ import {
   Phone,
   Pencil,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -45,8 +46,6 @@ const regionOptions = [
 
 const hospitalTypeOptions = ["상급종합병원", "종합병원", "병원", "의원"];
 const designationTypeOptions = ["인공/체외 동시 지정기관", "인공수정 지정기관"];
-
-const EDIT_PASSWORD = "203040";
 
 const statusMeta = {
   available: {
@@ -104,6 +103,57 @@ function StatusDot({ status }) {
   return <span className={`inline-block h-3 w-3 rounded-full ${statusMeta[status].dot}`} />;
 }
 
+/* ── Place Search Hook ── */
+function usePlaceSearch() {
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [places, setPlaces] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const debounceRef = useRef(null);
+
+  const search = useCallback((q) => {
+    setPlaceQuery(q);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!q.trim() || q.trim().length < 2) {
+      setPlaces([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/hospitals/search-place?query=${encodeURIComponent(q.trim())}`);
+        const data = await res.json();
+        setPlaces(data.places || []);
+      } catch {
+        setPlaces([]);
+      }
+      setSearching(false);
+    }, 300);
+  }, []);
+
+  const reset = useCallback(() => {
+    setPlaceQuery("");
+    setPlaces([]);
+  }, []);
+
+  return { placeQuery, places, searching, search, reset };
+}
+
+/* ── Verify password via API ── */
+async function verifyPassword(id, password) {
+  try {
+    const res = await fetch("/api/hospitals/verify-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, password }),
+    });
+    const data = await res.json();
+    return data.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+/* ── Main Component ── */
 export default function FertilityHospitalApp() {
   const [hospitals, setHospitals] = useState([]);
   const [query, setQuery] = useState("");
@@ -116,17 +166,23 @@ export default function FertilityHospitalApp() {
     memo: "",
     hospital_type: "",
     designation_type: "",
+    password: "",
+    latitude: null,
+    longitude: null,
   });
   const [editingId, setEditingId] = useState(null);
   const [voterSelections, setVoterSelections] = useState({});
   const [formOpen, setFormOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordValue, setPasswordValue] = useState("");
+  const [passwordChecking, setPasswordChecking] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedHospitalId, setSelectedHospitalId] = useState(null);
 
   const userLocation = useGeolocation();
+  const placeSearch = usePlaceSearch();
 
   const filtered = useMemo(() => {
     return hospitals.filter((h) => {
@@ -137,58 +193,39 @@ export default function FertilityHospitalApp() {
         (statusFilter === "진료 가능" && h.status === "available") ||
         (statusFilter === "진료 불가" && h.status === "unavailable") ||
         (statusFilter === "미확인" && h.status === "unknown");
-
       return matchesQuery && matchesStatus;
     });
   }, [hospitals, query, statusFilter]);
 
-  const stats = useMemo(() => {
-    return {
-      total: hospitals.length,
-      available: hospitals.filter((h) => h.status === "available").length,
-      unavailable: hospitals.filter((h) => h.status === "unavailable").length,
-      unknown: hospitals.filter((h) => h.status === "unknown").length,
-    };
-  }, [hospitals]);
+  const stats = useMemo(() => ({
+    total: hospitals.length,
+    available: hospitals.filter((h) => h.status === "available").length,
+    unavailable: hospitals.filter((h) => h.status === "unavailable").length,
+    unknown: hospitals.filter((h) => h.status === "unknown").length,
+  }), [hospitals]);
 
   const fetchHospitals = async () => {
-    if (!supabase) {
-      setError("Supabase 환경변수가 없습니다.");
-      setLoading(false);
-      return;
-    }
-
+    if (!supabase) { setError("Supabase 환경변수가 없습니다."); setLoading(false); return; }
     setLoading(true);
     setError("");
-
     const { data, error } = await supabase
       .from("hospitals")
       .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
       .order("id", { ascending: true });
-
-    if (error) {
-      setError("병원 목록을 불러오지 못했습니다.");
-      setLoading(false);
-      return;
-    }
-
+    if (error) { setError("병원 목록을 불러오지 못했습니다."); setLoading(false); return; }
     setHospitals((data ?? []).map(normalizeHospital));
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchHospitals();
-  }, []);
+  useEffect(() => { fetchHospitals(); }, []);
 
   const resetForm = () => {
-    setForm({ name: "", region: "서울", address: "", phone: "", memo: "", hospital_type: "", designation_type: "" });
+    setForm({ name: "", region: "서울", address: "", phone: "", memo: "", hospital_type: "", designation_type: "", password: "", latitude: null, longitude: null });
     setEditingId(null);
+    placeSearch.reset();
   };
 
-  const openNewHospitalForm = () => {
-    resetForm();
-    setFormOpen(true);
-  };
+  const openNewHospitalForm = () => { resetForm(); setFormOpen(true); };
 
   const requestProtectedAction = (action) => {
     setPendingAction(action);
@@ -197,13 +234,11 @@ export default function FertilityHospitalApp() {
   };
 
   const handleVote = async (id, type) => {
-    const target = hospitals.find((hospital) => hospital.id === id);
+    const target = hospitals.find((h) => h.id === id);
     if (!target || !supabase) return;
-
     const previousVote = voterSelections[id] || null;
     let upvotes = target.upvotes;
     let downvotes = target.downvotes;
-
     if (previousVote === type) {
       if (type === "available") upvotes = Math.max(0, upvotes - 1);
       if (type === "unavailable") downvotes = Math.max(0, downvotes - 1);
@@ -213,34 +248,17 @@ export default function FertilityHospitalApp() {
       if (type === "available") upvotes += 1;
       if (type === "unavailable") downvotes += 1;
     }
-
-    const { error } = await supabase
-      .from("hospitals")
-      .update({ upvotes, downvotes })
-      .eq("id", id);
-
-    if (error) {
-      window.alert("투표 저장에 실패했습니다.");
-      return;
-    }
-
-    setHospitals((prev) =>
-      prev.map((hospital) =>
-        hospital.id === id
-          ? { ...hospital, upvotes, downvotes, status: computeStatus(upvotes, downvotes) }
-          : hospital
-      )
-    );
-
-    setVoterSelections((prev) => ({
-      ...prev,
-      [id]: previousVote === type ? null : type,
-    }));
+    const { error } = await supabase.from("hospitals").update({ upvotes, downvotes }).eq("id", id);
+    if (error) { window.alert("투표 저장에 실패했습니다."); return; }
+    setHospitals((prev) => prev.map((h) => h.id === id ? { ...h, upvotes, downvotes, status: computeStatus(upvotes, downvotes) } : h));
+    setVoterSelections((prev) => ({ ...prev, [id]: previousVote === type ? null : type }));
   };
 
   const handleAddHospital = async () => {
-    if (!form.name.trim() || !supabase) return;
-
+    if (!form.name.trim() || !form.password.trim() || !supabase) {
+      if (!form.password.trim()) window.alert("비밀번호를 입력해주세요.");
+      return;
+    }
     const payload = {
       name: form.name.trim(),
       region: form.region.trim(),
@@ -249,21 +267,18 @@ export default function FertilityHospitalApp() {
       note: form.memo.trim(),
       hospital_type: form.hospital_type || null,
       designation_type: form.designation_type || null,
+      latitude: form.latitude,
+      longitude: form.longitude,
+      password: form.password.trim(),
       upvotes: 0,
       downvotes: 0,
     };
-
     const { data, error } = await supabase
       .from("hospitals")
       .insert(payload)
       .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
       .single();
-
-    if (error) {
-      window.alert("병원 등록에 실패했습니다.");
-      return;
-    }
-
+    if (error) { window.alert("병원 등록에 실패했습니다."); return; }
     setHospitals((prev) => [normalizeHospital(data), ...prev]);
     resetForm();
     setFormOpen(false);
@@ -271,7 +286,6 @@ export default function FertilityHospitalApp() {
 
   const handleSaveHospital = async () => {
     if (!form.name.trim() || editingId === null || !supabase) return;
-
     const payload = {
       name: form.name.trim(),
       region: form.region.trim(),
@@ -280,23 +294,17 @@ export default function FertilityHospitalApp() {
       note: form.memo.trim(),
       hospital_type: form.hospital_type || null,
       designation_type: form.designation_type || null,
+      latitude: form.latitude,
+      longitude: form.longitude,
     };
-
     const { data, error } = await supabase
       .from("hospitals")
       .update(payload)
       .eq("id", editingId)
       .select("id, name, region, district, address, phone, note, hospital_type, designation_type, upvotes, downvotes, latitude, longitude")
       .single();
-
-    if (error) {
-      window.alert("병원 수정에 실패했습니다.");
-      return;
-    }
-
-    setHospitals((prev) =>
-      prev.map((hospital) => (hospital.id === editingId ? normalizeHospital(data) : hospital))
-    );
+    if (error) { window.alert("병원 수정에 실패했습니다."); return; }
+    setHospitals((prev) => prev.map((h) => h.id === editingId ? normalizeHospital(data) : h));
     resetForm();
     setFormOpen(false);
   };
@@ -311,46 +319,37 @@ export default function FertilityHospitalApp() {
       memo: hospital.notes?.[0] || "",
       hospital_type: hospital.hospital_type || "",
       designation_type: hospital.designation_type || "",
+      password: "",
+      latitude: hospital.latitude,
+      longitude: hospital.longitude,
     });
     setFormOpen(true);
   };
 
   const performDeleteHospital = async (id) => {
     if (!supabase) return;
-
     const { error } = await supabase.from("hospitals").delete().eq("id", id);
-
-    if (error) {
-      window.alert("병원 삭제에 실패했습니다.");
-      return;
-    }
-
-    setHospitals((prev) => prev.filter((hospital) => hospital.id !== id));
-    setVoterSelections((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-
-    if (editingId === id) {
-      resetForm();
-      setFormOpen(false);
-    }
+    if (error) { window.alert("병원 삭제에 실패했습니다."); return; }
+    setHospitals((prev) => prev.filter((h) => h.id !== id));
+    setVoterSelections((prev) => { const next = { ...prev }; delete next[id]; return next; });
+    if (editingId === id) { resetForm(); setFormOpen(false); }
   };
 
-  const handlePasswordSubmit = () => {
-    if (passwordValue !== EDIT_PASSWORD) {
+  const handlePasswordSubmit = async () => {
+    const targetId = pendingAction?.type === "edit" ? pendingAction.hospital.id : pendingAction?.id;
+    if (!targetId || !passwordValue) return;
+
+    setPasswordChecking(true);
+    const ok = await verifyPassword(targetId, passwordValue);
+    setPasswordChecking(false);
+
+    if (!ok) {
       window.alert("비밀번호가 올바르지 않습니다.");
       return;
     }
 
-    if (pendingAction?.type === "edit") {
-      openEditHospital(pendingAction.hospital);
-    }
-
-    if (pendingAction?.type === "delete") {
-      performDeleteHospital(pendingAction.id);
-    }
+    if (pendingAction?.type === "edit") openEditHospital(pendingAction.hospital);
+    if (pendingAction?.type === "delete") performDeleteHospital(pendingAction.id);
 
     setPasswordOpen(false);
     setPasswordValue("");
@@ -359,15 +358,37 @@ export default function FertilityHospitalApp() {
 
   const closePasswordDialog = (open) => {
     setPasswordOpen(open);
-    if (!open) {
-      setPasswordValue("");
-      setPendingAction(null);
+    if (!open) { setPasswordValue(""); setPendingAction(null); }
+  };
+
+  const handleSelectPlace = (place) => {
+    // Extract region from address
+    const regionMap = {
+      '서울': '서울', '부산': '부산', '대구': '대구', '인천': '인천',
+      '광주': '광주', '대전': '대전', '울산': '울산', '세종': '세종',
+      '경기': '경기', '강원': '강원', '충북': '충북', '충남': '충남',
+      '전북': '전북', '전남': '전남', '경북': '경북', '경남': '경남', '제주': '제주',
+    };
+    let region = "서울";
+    for (const [key, val] of Object.entries(regionMap)) {
+      if (place.address?.includes(key)) { region = val; break; }
     }
+
+    setForm((prev) => ({
+      ...prev,
+      name: prev.name || place.name,
+      address: place.road_address || place.address,
+      phone: prev.phone || place.phone,
+      latitude: place.latitude,
+      longitude: place.longitude,
+      region,
+    }));
+    placeSearch.reset();
   };
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-10">
-      <div className="mx-auto max-w-6xl space-y-4 md:space-y-6">
+      <div className="mx-auto max-w-4xl space-y-4 md:space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1.5">
@@ -378,7 +399,8 @@ export default function FertilityHospitalApp() {
             {error && <p className="text-sm text-red-600">{error}</p>}
           </div>
 
-          <Dialog open={formOpen} onOpenChange={setFormOpen}>
+          {/* ── Hospital Form Dialog ── */}
+          <Dialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
               <Button className="gap-2 rounded-2xl" onClick={openNewHospitalForm}>
                 <PlusCircle className="h-4 w-4" /> 병원 직접 등록
@@ -389,23 +411,49 @@ export default function FertilityHospitalApp() {
                 <DialogTitle>{editingId ? "병원 수정" : "병원 등록"}</DialogTitle>
               </DialogHeader>
               <div className="grid grid-cols-1 gap-4 py-2">
+                {/* Place Search */}
+                <div className="space-y-2">
+                  <Label>장소 검색 (카카오)</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      className="pl-10"
+                      placeholder="병원명 또는 주소로 검색"
+                      value={placeSearch.placeQuery}
+                      onChange={(e) => placeSearch.search(e.target.value)}
+                    />
+                    {placeSearch.searching && (
+                      <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-slate-400" />
+                    )}
+                  </div>
+                  {placeSearch.places.length > 0 && (
+                    <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                      {placeSearch.places.map((place, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleSelectPlace(place)}
+                          className="w-full px-3 py-2.5 text-left hover:bg-slate-50 border-b border-slate-100 last:border-0"
+                        >
+                          <p className="text-sm font-medium">{place.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{place.road_address || place.address}</p>
+                          {place.phone && <p className="text-xs text-slate-400 mt-0.5">{place.phone}</p>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <hr className="border-slate-200" />
+
+                {/* Name */}
                 <div className="space-y-2">
                   <Label>병원명 *</Label>
                   <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
                 </div>
+
+                {/* Type dropdowns */}
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>지역</Label>
-                    <select
-                      value={form.region}
-                      onChange={(e) => setForm({ ...form, region: e.target.value })}
-                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
-                    >
-                      {regionOptions.map((region) => (
-                        <option key={region} value={region}>{region}</option>
-                      ))}
-                    </select>
-                  </div>
                   <div className="space-y-2">
                     <Label>종별</Label>
                     <select
@@ -414,51 +462,92 @@ export default function FertilityHospitalApp() {
                       className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
                     >
                       <option value="">선택</option>
-                      {hospitalTypeOptions.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                      {hospitalTypeOptions.map((t) => (<option key={t} value={t}>{t}</option>))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>지정 유형</Label>
+                    <select
+                      value={form.designation_type}
+                      onChange={(e) => setForm({ ...form, designation_type: e.target.value })}
+                      className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
+                    >
+                      <option value="">선택</option>
+                      {designationTypeOptions.map((t) => (<option key={t} value={t}>{t}</option>))}
                     </select>
                   </div>
                 </div>
+
+                {/* Region */}
                 <div className="space-y-2">
-                  <Label>지정 유형</Label>
+                  <Label>지역</Label>
                   <select
-                    value={form.designation_type}
-                    onChange={(e) => setForm({ ...form, designation_type: e.target.value })}
+                    value={form.region}
+                    onChange={(e) => setForm({ ...form, region: e.target.value })}
                     className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
                   >
-                    <option value="">선택</option>
-                    {designationTypeOptions.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
+                    {regionOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
                   </select>
                 </div>
+
+                {/* Address (read-only, filled by place search) */}
                 <div className="space-y-2">
-                  <Label>주소</Label>
+                  <Label>
+                    주소
+                    {form.latitude
+                      ? <span className="text-emerald-600 text-xs ml-1">좌표 입력됨</span>
+                      : <span className="text-orange-500 text-xs ml-1">위 장소 검색으로 입력해주세요</span>
+                    }
+                  </Label>
                   <Input
                     value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
-                    placeholder="예: 서울특별시 강남구 ..."
+                    readOnly
+                    className="bg-slate-50 cursor-not-allowed"
+                    placeholder="장소 검색으로 자동 입력됩니다"
                   />
+                  {form.address && (
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, address: "", latitude: null, longitude: null, region: "서울" })}
+                      className="text-xs text-red-500 hover:underline"
+                    >
+                      주소 초기화
+                    </button>
+                  )}
                 </div>
+
+                {/* Phone */}
                 <div className="space-y-2">
                   <Label>전화번호</Label>
                   <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 </div>
+
+                {/* Memo */}
                 <div className="space-y-2">
                   <Label>메모</Label>
                   <Textarea value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} />
                 </div>
+
+                {/* Password */}
+                {!editingId && (
+                  <div className="space-y-2">
+                    <Label>비밀번호 * <span className="text-xs text-slate-400 font-normal">수정/삭제 시 필요</span></Label>
+                    <Input
+                      type="password"
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                      placeholder="비밀번호 설정"
+                    />
+                  </div>
+                )}
+
+                {/* Submit */}
                 <div className="flex gap-2">
                   <Button onClick={editingId ? handleSaveHospital : handleAddHospital} className="flex-1 rounded-2xl">
                     {editingId ? "수정 저장" : "등록하기"}
                   </Button>
                   {editingId && (
-                    <Button
-                      variant="outline"
-                      onClick={() => { resetForm(); setFormOpen(false); }}
-                      className="rounded-2xl"
-                    >
+                    <Button variant="outline" onClick={() => { resetForm(); setFormOpen(false); }} className="rounded-2xl">
                       취소
                     </Button>
                   )}
@@ -485,7 +574,9 @@ export default function FertilityHospitalApp() {
                 />
               </div>
               <div className="flex gap-2">
-                <Button onClick={handlePasswordSubmit} className="flex-1 rounded-2xl">확인</Button>
+                <Button onClick={handlePasswordSubmit} disabled={passwordChecking} className="flex-1 rounded-2xl">
+                  {passwordChecking ? <Loader2 className="h-4 w-4 animate-spin" /> : "확인"}
+                </Button>
                 <Button variant="outline" onClick={() => closePasswordDialog(false)} className="rounded-2xl">취소</Button>
               </div>
             </div>
@@ -533,7 +624,6 @@ export default function FertilityHospitalApp() {
                   onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
-
               <Tabs value={statusFilter} onValueChange={setStatusFilter}>
                 <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="전체">전체</TabsTrigger>
@@ -547,16 +637,30 @@ export default function FertilityHospitalApp() {
         </Card>
 
         {/* Map */}
-        <HospitalMap hospitals={filtered} userLocation={userLocation} />
+        <HospitalMap
+          hospitals={filtered}
+          userLocation={userLocation}
+          onSelectHospital={(id) => setSelectedHospitalId(id)}
+        />
 
         {/* Hospital List */}
+        {selectedHospitalId && (
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-xs px-2 py-1 bg-blue-50 text-blue-700 border-blue-200">
+              지도에서 선택한 병원
+            </Badge>
+            <button onClick={() => setSelectedHospitalId(null)} className="text-xs text-slate-500 hover:underline">
+              전체 보기
+            </button>
+          </div>
+        )}
         {loading ? (
           <Card className="rounded-2xl border-0 shadow-sm">
             <CardContent className="py-16 text-center text-slate-500">불러오는 중...</CardContent>
           </Card>
         ) : (
           <div className="grid gap-3 md:gap-4">
-            {filtered.map((hospital) => {
+            {(selectedHospitalId ? filtered.filter((h) => h.id === selectedHospitalId) : filtered).map((hospital) => {
               const meta = statusMeta[hospital.status];
               const StatusIcon = meta.icon;
               const currentVote = voterSelections[hospital.id];
@@ -586,41 +690,21 @@ export default function FertilityHospitalApp() {
                       </div>
 
                       <div className="flex flex-wrap gap-1.5 md:gap-2">
-                        <Button
-                          size="sm"
-                          variant={currentVote === "available" ? "default" : "outline"}
-                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
-                          onClick={() => handleVote(hospital.id, "available")}
-                        >
+                        <Button size="sm" variant={currentVote === "available" ? "default" : "outline"} className="gap-1.5 rounded-2xl text-xs md:text-sm" onClick={() => handleVote(hospital.id, "available")}>
                           <CheckCircle2 className="h-3.5 w-3.5" />
                           <span className="hidden md:inline">{currentVote === "available" ? "가능 취소" : "가능"}</span>
                           <span className="md:hidden">{currentVote === "available" ? "취소" : "가능"}</span>
                         </Button>
-                        <Button
-                          size="sm"
-                          variant={currentVote === "unavailable" ? "default" : "outline"}
-                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
-                          onClick={() => handleVote(hospital.id, "unavailable")}
-                        >
+                        <Button size="sm" variant={currentVote === "unavailable" ? "default" : "outline"} className="gap-1.5 rounded-2xl text-xs md:text-sm" onClick={() => handleVote(hospital.id, "unavailable")}>
                           <XCircle className="h-3.5 w-3.5" />
                           <span className="hidden md:inline">{currentVote === "unavailable" ? "불가 취소" : "불가"}</span>
                           <span className="md:hidden">{currentVote === "unavailable" ? "취소" : "불가"}</span>
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 rounded-2xl text-xs md:text-sm"
-                          onClick={() => requestProtectedAction({ type: "edit", hospital })}
-                        >
+                        <Button size="sm" variant="outline" className="gap-1.5 rounded-2xl text-xs md:text-sm" onClick={() => requestProtectedAction({ type: "edit", hospital })}>
                           <Pencil className="h-3.5 w-3.5" />
                           <span className="hidden md:inline">수정</span>
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="gap-1.5 rounded-2xl text-xs md:text-sm text-red-600"
-                          onClick={() => requestProtectedAction({ type: "delete", id: hospital.id })}
-                        >
+                        <Button size="sm" variant="outline" className="gap-1.5 rounded-2xl text-xs md:text-sm text-red-600" onClick={() => requestProtectedAction({ type: "delete", id: hospital.id })}>
                           <Trash2 className="h-3.5 w-3.5" />
                           <span className="hidden md:inline">삭제</span>
                         </Button>
@@ -637,9 +721,7 @@ export default function FertilityHospitalApp() {
                       <div className="flex items-start gap-2">
                         <Phone className="mt-0.5 h-3.5 w-3.5 md:h-4 md:w-4 shrink-0" />
                         {hospital.phone ? (
-                          <a href={`tel:${hospital.phone}`} className="text-blue-600 hover:underline">
-                            {hospital.phone}
-                          </a>
+                          <a href={`tel:${hospital.phone}`} className="text-blue-600 hover:underline">{hospital.phone}</a>
                         ) : (
                           <span>연락처 정보 없음</span>
                         )}
@@ -667,9 +749,7 @@ export default function FertilityHospitalApp() {
                       <div className="rounded-2xl border border-slate-200 p-3 md:p-4">
                         <p className="mb-1.5 text-xs md:text-sm font-semibold">메모</p>
                         <ul className="space-y-1.5 text-xs md:text-sm text-slate-600">
-                          {hospital.notes.map((note, idx) => (
-                            <li key={idx}>• {note}</li>
-                          ))}
+                          {hospital.notes.map((note, idx) => (<li key={idx}>• {note}</li>))}
                         </ul>
                       </div>
                     )}

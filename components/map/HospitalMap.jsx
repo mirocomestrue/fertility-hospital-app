@@ -62,7 +62,7 @@ function getLocationErrorMessage(err) {
   }
 }
 
-export default function HospitalMap({ hospitals, userLocation }) {
+export default function HospitalMap({ hospitals, userLocation, onSelectHospital }) {
   const { ready, error } = useKakaoMapReady();
 
   const [map, setMap] = useState(null);
@@ -161,7 +161,7 @@ export default function HospitalMap({ hospitals, userLocation }) {
         level={level}
         style={{ width: "100%", height: "60vh", minHeight: "400px" }}
         onCreate={setMap}
-        onClick={() => setSelectedHospital(null)}
+        onClick={() => { setSelectedHospital(null); onSelectHospital?.(null); }}
       >
         {/* User location marker */}
         {userLocation?.latitude && userLocation?.longitude && (
@@ -193,7 +193,7 @@ export default function HospitalMap({ hospitals, userLocation }) {
                 size: { width: 28, height: 36 },
                 options: { offset: { x: 14, y: 36 } },
               }}
-              onClick={() => setSelectedHospital(hospital)}
+              onClick={() => { setSelectedHospital(hospital); onSelectHospital?.(hospital.id); }}
             />
           );
         })}

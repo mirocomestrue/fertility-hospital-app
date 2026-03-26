@@ -23,7 +23,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, message: "병원을 찾을 수 없습니다." }, { status: 404 });
   }
 
-  if (data.password !== password) {
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const isAdmin = adminPassword && password === adminPassword;
+
+  if (!isAdmin && data.password !== password) {
     return NextResponse.json({ ok: false, message: "비밀번호가 올바르지 않습니다." }, { status: 403 });
   }
 

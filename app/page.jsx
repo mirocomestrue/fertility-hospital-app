@@ -309,6 +309,7 @@ export default function FertilityHospitalApp() {
           <div>
             <h1 className="text-xl md:text-2xl font-bold tracking-tight">난임 지정 병원 찾기</h1>
             <p className="text-xs md:text-sm text-slate-500 mt-1">전국 난임시술 의료기관 현황 (2025.12.31 기준)</p>
+            <p className="text-[11px] text-slate-400 mt-1">가능/불가 여부는 최근 제보를 기준으로 표시되며, 실제 진료 상황과 다를 수 있습니다.</p>
             {error && <p className="text-sm text-red-600 mt-1">{error}</p>}
           </div>
           <Dialog open={formOpen} onOpenChange={(open) => { setFormOpen(open); if (!open) resetForm(); }}>
